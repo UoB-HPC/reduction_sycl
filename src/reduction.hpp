@@ -80,25 +80,24 @@ void parallel_reduce_1d(cl::sycl::queue& q,
     h.parallel_for<nameT>(
         sycl::nd_range<1>(dotNumGroups * dotWgsize, dotWgsize),
         [=](sycl::nd_item<1> item) {
-          size_t i = item.get_global_id(0);
-          size_t li = item.get_local_id(0);
+          size_t globalId = item.get_global_id(0);
+          size_t localId = item.get_local_id(0);
           size_t globalSize = item.get_global_range()[0];
-
-          empty(ctx, sycl::id<1>(li));
-          for (; i < n; i += globalSize) {
-            functor(ctx, sycl::id<1>(li), range.from + i);
+          empty(ctx, sycl::id<1>(localId));
+          for (; globalId < n; globalId += globalSize) {
+            functor(ctx, sycl::id<1>(localId), range.from + globalId);
           }
 
           size_t localSize = item.get_local_range()[0];  // 8
           for (size_t offset = localSize / 2; offset > 0; offset /= 2) {
             item.barrier(sycl::access::fence_space::local_space);
-            if (li < offset) {
-              combiner(ctx, sycl::id<1>(li), sycl::id<1>(li + offset));
+            if (localId < offset) {
+              combiner(ctx, sycl::id<1>(localId),
+                       sycl::id<1>(localId + offset));
             }
           }
-
-          if (li == 0) {
-            finaliser(ctx, item.get_group(0), sycl::id<1>(0));
+          if (localId == 0) {
+            finaliser(ctx, item.get_group(0) * dotWgsize, sycl::id<1>(0));
           }
         });
   });
@@ -109,11 +108,10 @@ void parallel_reduce_1d(cl::sycl::queue& q,
       auto zero = sycl::id<1>(0);
       empty(ctx, zero);  // local[0] = empty
       for (size_t i = 0; i < dotNumGroups; ++i) {
-        ctx.drain(sycl::id<1>(i), sycl::id<1>(i));
+        ctx.drain(sycl::id<1>(i), sycl::id<1>(i * dotWgsize));
       }
       for (size_t i = 1; i < dotNumGroups; ++i) {
-        combiner(ctx, zero,
-                 sycl::id<1>(i));  // local[0] = local[0] |+| xs[i]
+        combiner(ctx, zero, sycl::id<1>(i));
       }
       finaliser(ctx, 0, zero);  // xs[0] = local[0]
     });

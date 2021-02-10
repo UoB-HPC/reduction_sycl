@@ -60,7 +60,7 @@ double reduceSYCLGeneric(sycl::queue queue, const size_t N) {
         r.result[group] = r.local[idx];
       });
 
-  queue.wait_and_throw();
+  //  queue.wait_and_throw();
   auto actual = result.get_access<sycl::access::mode::read>()[0];
 
   return actual;
@@ -91,6 +91,7 @@ double reduceSYCLNonGeneric(cl::sycl::queue queue, const size_t N) {
     cl::sycl::accessor<double, 1, sycl::access::mode::read_write,
                        sycl::access::target::local>
         local(cl::sycl::range<1>(dotWgsize), h);
+    auto source(result.get_access<sycl::access::mode::read>(h));  // don't use
     auto drain(result.get_access<sycl::access::mode::read_write>(h));
     h.parallel_for<class reduce>(
         sycl::nd_range<1>(dotNumGroups * dotWgsize, dotWgsize),
@@ -112,23 +113,23 @@ double reduceSYCLNonGeneric(cl::sycl::queue queue, const size_t N) {
             }
           }
           if (localId == 0) {
-            drain[item.get_group(0)] = local[0];
+            drain[item.get_group(0) * dotWgsize] = local[0];
           }
         });
   });
-
+  // queue.wait_and_throw();
   // then reduce groups to the first element
   queue.submit([=](cl::sycl::handler& h) mutable {
     cl::sycl::accessor<double, 1, sycl::access::mode::read_write,
                        sycl::access::target::local>
         local(cl::sycl::range<1>(dotNumGroups), h);
-
+    auto source(result.get_access<sycl::access::mode::read>(h));  // don't use
     auto drain(result.get_access<sycl::access::mode::read_write>(h));
     h.parallel_for<class final_reduction>(
         cl::sycl::nd_range<1>(1, 1), [=](auto) {
           local[0] = DOUBLE_MAX;
           for (size_t i = 0; i < dotNumGroups; ++i) {
-            local[i] = drain[i];
+            local[i] = drain[i * dotWgsize];
           }
           for (size_t i = 1; i < dotNumGroups; ++i) {
             local[0] = sycl::fmin(local[0], local[i]);
@@ -137,7 +138,7 @@ double reduceSYCLNonGeneric(cl::sycl::queue queue, const size_t N) {
         });
   });
 
-  queue.wait_and_throw();
+  // queue.wait_and_throw();
   auto actual = result.get_access<sycl::access::mode::read>()[0];
 
   return actual;
@@ -170,7 +171,7 @@ int main() {
   // for large sizes, try >= 8192
   const double size = 128;
 
-  constexpr bool useGeneric = true;
+  constexpr bool useGeneric = false;
 
   for (int i = 0; i < 100; ++i) {
     auto expected = reduceSTL(size);
